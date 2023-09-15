@@ -1,12 +1,75 @@
 # note
 
+## 介绍
+
+线程池 + 非阻塞 socket + epoll + 事件处理 并发模型
+
+状态机解析HTTP 请求报文，解析 GET 和 POST 请求。
+
+访问服务器数据库实现web端用户 注册、登录功能，请求服务器图片和视频文件
+
+实现同步/异步 日志系统，记录服务器运行状态
+
+webbech 压力测试 实现 上万的并发连接数据交换。
+
+## 准备
+
+unix 环境高级编程
+
+unix 网络编程
+
 ## 内容细节
 
 ### 3.web 服务器如何接受客户端发来的HTTP 请求报文
 
+> 用户如何与你的Web服务器进行通信
+
+通常用户使用**Web浏览器**与**相应服务器**进行通信。在浏览器中键入“域名”或“IP地址:端口号”，浏览器则先将你的域名解析成相应的IP地址或者直接根据你的IP地址向对应的Web服务器发送一个HTTP请求。这一过程**首先要通过TCP协议的三次握手建立与目标Web服务器的连接**，然后HTTP协议生成针对目标Web服务器的HTTP请求报文，通过TCP、IP等协议发送到目标Web服务器上。
+
+> Web服务器如何接收客户端发来的HTTP请求报文呢?
+
+```c++
+#include <sys/socket.h>
+#include <netinet/in.h>
+/* 创建监听socket文件描述符 */
+int listenfd = socket(PF_INET, SOCK_STREAM, 0);
+/* 创建监听socket的TCP/IP的IPV4 socket地址 */
+struct sockaddr_in address;
+bzero(&address, sizeof(address));
+address.sin_family = AF_INET;
+address.sin_addr.s_addr = htonl(INADDR_ANY);  /* INADDR_ANY：将套接字绑定到所有可用的接口 htonl:host to network long 将本地字节序的 32 位整数转换为网络字节序的 32 位整数*/
+address.sin_port = htons(port);
+
+int flag = 1;
+/* SO_REUSEADDR 允许端口被重复使用 */
+setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+/* 绑定socket和它的地址 */
+ret = bind(listenfd, (struct sockaddr*)&address, sizeof(address));  
+/* 创建监听队列以存放待处理的客户连接，在这些客户连接被accept()之前 */
+ret = listen(listenfd, 5);
+```
+
+Web服务器端通过socket监听来自用户的请求。
+
 远端的很多用户会尝试去connect()这个Web Server上正在listen的这个port，而监听到的这些连接会排队等待被accept()。由于用户连接请求是随机到达的异步事件，每当监听socket（listenfd）listen到**新的客户连接并且放入监听队列**，我们都需要告诉我们的Web服务器有连接来了，accept这个连接，并分配一个逻辑单元来处理这个用户请求。而且，我们在处理这个请求的同时，还需要继续监听其他客户的请求并分配其另一逻辑单元来处理（并发，同时处理多个事件，后面会提到使用线程池实现并发）。这里，服务器通过epoll这种I/O复用技术（还有select和poll）来实现对监听socket（listenfd）和连接socket（客户请求）的同时监听。注意I/O复用虽然可以同时监听多个文件描述符，但是它本身是阻塞的，并且当有多个文件描述符同时就绪的时候，如果不采取额外措施，程序则只能按顺序处理其中就绪的每一个文件描述符，所以为提高效率，我们将在这部分通过线程池来实现并发（多线程并发），为每个就绪的文件描述符分配一个逻辑单元（线程）来处理。
 
 ## 其他相关细节
+
+### socket 函数
+
+socket 函数 位于库 <sys/socket.h> 中 socket 的原型为 socket(int domain, int type, int protocol)
+
+domain 表示套接字的协议域或地址族。
+
+type 表示套接字的类型
+
+- SOCK_STREAM：流套接字，用于可靠的、面向连接的TCP通信。
+- SOCK_DGRAM：数据报套接字，用于不可靠的、无连接的UDP通信。
+- SOCK_RAW：原始套接字，用于直接访问底层网络协议，通常需要特权。
+
+socket 创建套接字，bind 绑定ip ， listen 监听， accept 接受连接
+
+protocol :参数0 即为 自动选择
 
 ### socket linger
 
