@@ -104,6 +104,8 @@ void WebServer::eventListen()
 {
     //网络编程基础步骤
     m_listenfd = socket(PF_INET, SOCK_STREAM, 0);
+    // socket
+    // PF_INET : 表示使用ip 协议 IPv4 ， SOCK_STREAM : 表示使用字节流，即TCP 协议。 0： 表示 自适应 protocol
     assert(m_listenfd >= 0);
 
     //优雅关闭连接
@@ -117,7 +119,20 @@ void WebServer::eventListen()
         struct linger tmp = {1, 1};
         setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
     }
-
+    /*setsockopt 的功能 
+        int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
+        第一个参数 sockfd 表示要设置选项的套接字文件描述符
+        第二个参数 level：选项所属的协议层级（protocol level）。
+        SOL_SOCKET：用于套接字级别选项，通常用于配置套接字的通用属性。
+        IPPROTO_TCP：用于TCP协议级别选项。
+        IPPROTO_IP：用于IP协议级别选项。
+        第三个参数 optname：这是一个整数，表示要设置的选项的类型。
+        对于 SOL_SOCKET，常见的选项包括 SO_REUSEADDR、SO_KEEPALIVE、SO_LINGER 等。
+        对于 IPPROTO_TCP，常见的选项包括 TCP_NODELAY、TCP_MAXSEG 等。
+        对于 IPPROTO_IP，常见的选项包括 IP_TTL、IP_TOS 等。
+        第四个参数 optval:这是一个指向存储选项值的缓冲区的指针。该缓冲区中存储着要设置的选项的值。这个缓冲区通常是一个包含了选项值的变量的地址。选项的值的类型和大小取决于具体的选项。
+        第五个参数 optle：缓冲区的大小
+    */
     int ret = 0;
     struct sockaddr_in address;
     bzero(&address, sizeof(address));
