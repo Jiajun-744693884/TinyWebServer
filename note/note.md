@@ -35,7 +35,7 @@ Web服务器端通过socket监听来自用户的请求。
 ```c++
 #include <sys/socket.h>
 #include <netinet/in.h>
-/* 创建监听socket文件描述符 */
+/* 创建 监听socket 文件描述符 */
 int listenfd = socket(PF_INET, SOCK_STREAM, 0);
 /* 创建监听socket的TCP/IP的IPV4 socket地址 */
 struct sockaddr_in address;
@@ -55,21 +55,24 @@ ret = listen(listenfd, 5);
 
 而且，我们在处理这个请求的同时，还需要继续监听其他客户的请求并分配其另一逻辑单元来处理（并发，同时处理多个事件，后面会提到使用**线程池实现并发**）。这里，服务器通过**epoll这种I/O复用技术**（还有select和poll）来实现对监听socket（listenfd）和连接socket（客户请求）的同时监听。注意I/O复用虽然可以同时监听多个文件描述符，但是它**本身是阻塞**的，并且当有多个文件描述符同时就绪的时候，如果不采取额外措施，程序则只能按顺序处理其中就绪的每一个文件描述符，所以为提高效率，我们将在这部分通过线程池来实现并发（多线程并发），为每个就绪的文件描述符分配一个逻辑单元（线程）来处理。
 
+EPOLL 中放入的是 需要监视的 socket 文件描述符
+
 ```c++
 #include <sys/epoll.h>
-/* 将fd上的EPOLLIN和EPOLLET事件注册到epollfd指示的epoll内核事件中 
+/* 将fd上的EPOLLIN和EPOLLET事件注册到epollfd指示的epoll内核事件中
 
 EPOLLIN : 表示你希望监视文件描述符上的可读事件
 EPOLLET : 表示你希望使用边缘触发（edge-triggered）方式来监视文件描述符
-EPOLL LT ： 希望使用水平触发
+EPOLLLT ： 希望使用水平触发
 EPOLLOUT : 监视文件描述符上的可写事件
 EPOLLERR : 表示你希望监视文件描述符上的错误事件
-EPOLLHUP : 表示你希望监视文件描述符上的挂起事件
+EPOLLHUP : 表示你希望监视文件描述符上的挂起事件，由 本地端进行发起 的关闭事件
 EPOLLPRI : 表示你希望监视文件描述符上的高优先级事件
-EPOLLONESHOT : 表示你希望使用**一次性事件模式**来监视文件描述符
-EPOLLEXCLUSIVE 表示你希望以**独占模式**监视文件描述符
+EPOLLONESHOT : 表示你希望使用**一次性事件模式**来监视文件描述符；原理：该文件描述符只会在第一次触发事件后从 epoll 队列中删除。每次事件触发后，你需要重新将该文件描述符添加到 epoll 实例中以监视下一次事件。
+EPOLLEXCLUSIVE : 表示你希望以**独占模式**监视文件描述符
+EPOLLRDHUP : 本地端 检测 对端 断开连接
 */
-
+// 这个函数位于 自己编写的 lst_timer.cpp内 
 void addfd(int epollfd, int fd, bool one_shot) {
     epoll_event event;
     event.data.fd = fd;
@@ -77,7 +80,7 @@ void addfd(int epollfd, int fd, bool one_shot) {
     /* 针对connfd，开启EPOLLONESHOT，因为我们希望每个socket在任意时刻都只被一个线程处理 */
     if(one_shot)
         event.events |= EPOLLONESHOT;
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);/* 函数功能： 添加文件描述符到 epoll 实例 
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);/* epoll_ctl 函数功能： 添加文件描述符到 epoll 实例 
     第一个参数 epoll 实例的文件描述符
     第二个参数 操作的类型op 是操作类型，可以是以下之一：
         EPOLL_CTL_ADD：将文件描述符添加到 epoll 实例中。
@@ -88,15 +91,34 @@ void addfd(int epollfd, int fd, bool one_shot) {
     */
     setnonblocking(fd);
 }
-/* 创建一个额外的文件描述符来唯一标识内核中的epoll事件表 （创建了一个epoll 实例）*/
+/* 创建一个额外的文件描述符来唯一标识内核中的epoll事件表 （创建了一个epoll 实例） 参数表示的是 size （表示容纳文件描述符的数目）。 返回的是文件描述符，内核2.6.8开始，size 会被忽略，大于0即可*/
 int epollfd = epoll_create(5);  
-/* 用于存储epoll事件表中就绪事件的event数组 */
-epoll_event events[MAX_EVENT_NUMBER];  
-/* 主线程往epoll内核事件表中注册监听socket事件，当listen到新的客户连接时，listenfd变为就绪事件 */
+/* 用于存储epoll事件表中就绪事件的event数组，即存储检测到有相关事件的socket 连接*/
+/*
+struct epoll_event 的原型 : 
+*/
+epoll_event events[MAX_EVENT_NUMBER];
+/* 主线程往epoll内核事件表中注册 监听socket 事件，当listen到新的客户连接时，listenfd变为就绪事件 */
 addfd(epollfd, listenfd, false);  
 /* 主线程调用epoll_wait等待一组文件描述符上的事件，并将当前所有就绪的epoll_event复制到events数组中 */
+/* epoll_wait 函数原型:
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+edfd : epoll 实例的文件描述符
+events : struct epoll_event 结构的数组指针，用于存储 event 的信息;
+maxevents : event 数组的大小
+timeout : 超时值，ms 为单位。如果设置为负数，epoll_wait 将会一直等待事件发生，直到有事件发生为止。如果设置为0，如果没有事件发生，epoll_wait 将会立即返回。如果设置为正数，epoll_wait 将等待指定的时间，然后返回，不管是否有事件发生。
+返回值 : 表示发生事件的数量，如果没有事件发生并且超时时间到达，返回值为0，如果发生错误，返回值为-1。
+*/
 int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
 /* 然后我们遍历这一数组以处理这些已经就绪的事件 */
+/* event 的 类型为 epoll_events，epoll_events 的原型为
+struct epoll_event
+{
+  uint32_t events;  // Epoll events 
+  epoll_data_t data;  // User data variable  这个是 union 结构，union 结构只会存储当前的一个值而不是多个值，这些值之间是共享内存的 。
+}
+*/
+
 for(int i = 0; i < number; ++i) {
     int sockfd = events[i].data.fd;  // 事件表中就绪的socket文件描述符
     if(sockfd == listenfd) {  // 当listen到新的用户连接，listenfd上则产生就绪事件
