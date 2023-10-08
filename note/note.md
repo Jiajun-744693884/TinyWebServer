@@ -124,7 +124,7 @@ for(int i = 0; i < number; ++i) {
     if(sockfd == listenfd) {  // 当listen到新的用户连接，listenfd上则产生就绪事件
         struct sockaddr_in client_address;
         socklen_t client_addrlength = sizeof(client_address);
-        /* ET模式 */
+        /* ET模式 就是边缘触发,需要一直accept 直到空为止*/
         while(1) {
             /* accept()返回一个新的socket文件描述符用于send()和recv() */
             int connfd = accept(listenfd, (struct sockaddr *) &client_address, &client_addrlength);
@@ -156,6 +156,20 @@ for(int i = 0; i < number; ++i) {
     }
 }
 ```
+
+服务器程序通常需要处理三类事件：**I/O事件**，**信号**及**定时事件**。有两种事件处理模式：
+
+Reactor模式：要求主线程（I/O处理单元）只负责监听文件描述符上是否有事件发生（可读、可写），若有，则立即通知工作线程（逻辑单元），将socket可读/可写事件放入请求队列，交给工作线程处理。
+
+Proactor模式：将所有的I/O操作都交给主线程和内核来处理（进行读、写），**工作线程仅负责处理逻辑**，如主线程读完成后users[sockfd].read()，选择一个工作线程来处理客户请求pool->append(users + sockfd)。
+
+通常使用同步I/O模型（如epoll_wait）实现Reactor。
+
+使用异步I/O（如aio_read和aio_write）实现Proactor。（异步IO,指发起IO之后立刻返回继续进行程序接下来的操作，「内核数据准备好」和「数据从内核态拷贝到用户态」这两个过程由内核自动完成的，和前面的同步操作不一样，应用程序并不需要主动发起拷贝动作）
+
+Proactor 模式：1. 创建 handler 2. 创建Proactor 3. 注册handler 和 proactor 进入到 内核的Asynchronous Operation Processor 中 4. Asynchronous Operation Processor 完成 I/O 操作后通知 Proactor 5. 回调不同的handler 进行业务处理 6. handler 完成事务
+
+Reactor 可以理解为「来了事件操作系统通知应用进程，让应用进程来处理」，而 Proactor 可以理解为「来了事件操作系统来处理，处理完再通知应用进程」。
 
 ## 其他相关细节
 
@@ -197,3 +211,6 @@ socket linger 是一个 控制 套接字关闭 的选项 包括两个成员：
 当你启用 SO_REUSEADDR 选项时，它允许你的套接字绑定到一个本地地址（IP地址和端口），即使在该地址上已经存在一个处于 TIME_WAIT 状态的套接字。通常情况下，如果尝试绑定到一个已经被占用的地址，操作系统会拒绝这个绑定请求。但启用 SO_REUSEADDR 选项后，即使之前的套接字仍处于 TIME_WAIT 状态，你的套接字也可以成功地绑定到相同的地址。
 
 表示允许 重用 本地地址。即使在该地址上已经存在一个处于 TIME_WAIT 状态的套接字。通常情况下，如果尝试绑定到一个已经被占用的地址，操作系统会拒绝这个绑定请求。但启用 SO_REUSEADDR 选项后，即使之前的套接字仍处于 TIME_WAIT 状态，你的套接字也可以成功地绑定到相同的地址。
+
+### 为什么选择 epoll 而不是 select 和 poll
+
